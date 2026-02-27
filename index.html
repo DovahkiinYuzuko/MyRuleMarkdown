@@ -1,0 +1,438 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>note用xml→md変換 -MyRuleMarkdown-</title>
+  <script src="https://cdn.jsdelivr.net/npm/turndown@7.1.2/dist/turndown.min.js"></script>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #5f6b7a;
+      --accent: #0ea5e9;
+      --border: #d8e0ea;
+      --ok: #0f766e;
+    }
+
+    body[data-theme="dark"] {
+      --bg: #111111;
+      --panel: #1a1a1a;
+      --text: #eeeeee;
+      --muted: #b5b5b5;
+      --accent: #0ea5e9;
+      --border: #2a2a2a;
+      --ok: #22c55e;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 10% 10%, rgba(14, 165, 233, 0.08), transparent 28%),
+        radial-gradient(circle at 90% 90%, rgba(14, 165, 233, 0.06), transparent 22%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", sans-serif;
+      padding: 24px;
+    }
+
+    .wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.4rem;
+      line-height: 1.3;
+    }
+
+    .sub {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    input[type="file"],
+    button,
+    textarea {
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      font: inherit;
+    }
+
+    input[type="file"] {
+      background: var(--panel);
+      color: var(--text);
+      padding: 8px;
+      min-width: 270px;
+      flex: 1;
+    }
+
+    button {
+      background: var(--accent);
+      color: #ffffff;
+      padding: 10px 14px;
+      border: 0;
+      cursor: pointer;
+      transition: transform 0.12s ease, opacity 0.12s ease;
+    }
+
+    button.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    button:not(:disabled):active {
+      transform: translateY(1px);
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(127, 127, 127, 0.15);
+      overflow: hidden;
+      margin-top: 6px;
+    }
+
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #0284c7, #0ea5e9);
+      transition: width 0.08s linear;
+    }
+
+    .meta {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-top: 8px;
+    }
+
+    .status {
+      color: var(--ok);
+      font-weight: 600;
+      margin-top: 8px;
+      min-height: 1.4em;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 260px;
+      resize: vertical;
+      padding: 10px;
+      color: var(--text);
+      background: transparent;
+    }
+
+    @media (max-width: 680px) {
+      body {
+        padding: 12px;
+      }
+
+      .panel {
+        padding: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="panel">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <h1>note用xml→md変換 -MyRuleMarkdown-</h1>
+          <div class="sub">Turndown + DOMParser で note XML を巨大Markdownへ統合</div>
+        </div>
+        <button id="themeToggle" class="secondary" type="button">ダークテーマに切替</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <input id="xmlFile" type="file" accept=".xml,text/xml,application/xml" />
+        <button id="convertBtn" type="button">変換開始</button>
+        <button id="downloadBtn" type="button" disabled>Markdownを保存</button>
+      </div>
+
+      <div class="progress-track" aria-label="進捗">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+
+      <div class="meta">
+        <div id="countInfo">処理: 0 / 0</div>
+        <div id="skipInfo">スキップ: 0 件</div>
+      </div>
+
+      <div id="status" class="status"></div>
+    </section>
+
+    <section class="panel">
+      <div class="sub" style="margin-top: 0; margin-bottom: 8px;">出力プレビュー（巨大文字列）</div>
+      <textarea id="output" spellcheck="false" placeholder="変換結果がここに表示されます"></textarea>
+    </section>
+  </div>
+
+  <script>
+    const THEME_KEY = "myrulemarkdown_theme";
+    const refs = {
+      body: document.body,
+      themeToggle: document.getElementById("themeToggle"),
+      xmlFile: document.getElementById("xmlFile"),
+      convertBtn: document.getElementById("convertBtn"),
+      downloadBtn: document.getElementById("downloadBtn"),
+      progressBar: document.getElementById("progressBar"),
+      countInfo: document.getElementById("countInfo"),
+      skipInfo: document.getElementById("skipInfo"),
+      status: document.getElementById("status"),
+      output: document.getElementById("output"),
+    };
+
+    let latestMarkdown = "";
+    let latestFileName = "";
+
+    const turndownService = new TurndownService({
+      headingStyle: "atx",
+      codeBlockStyle: "fenced",
+      hr: "---",
+      bulletListMarker: "-",
+    });
+
+    // Lightweight inline tags are flattened to plain text content.
+    turndownService.addRule("lightweight-inline-tags", {
+      filter: ["span", "em"],
+      replacement(content) {
+        return content;
+      },
+    });
+
+    function applyTheme(theme) {
+      refs.body.setAttribute("data-theme", theme);
+      refs.themeToggle.textContent = theme === "dark" ? "ライトテーマに切替" : "ダークテーマに切替";
+    }
+
+    function initTheme() {
+      const stored = localStorage.getItem(THEME_KEY);
+      const theme = stored === "dark" ? "dark" : "light";
+      applyTheme(theme);
+      refs.themeToggle.addEventListener("click", () => {
+        const next = refs.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        localStorage.setItem(THEME_KEY, next);
+        applyTheme(next);
+      });
+    }
+
+    function formatDateYYYYMMDD(raw) {
+      if (!raw) return "";
+      const d = new Date(raw);
+      if (!Number.isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      }
+      const found = String(raw).match(/(\d{4})[^\d]?(\d{1,2})[^\d]?(\d{1,2})/);
+      if (found) {
+        return `${found[1]}-${String(found[2]).padStart(2, "0")}-${String(found[3]).padStart(2, "0")}`;
+      }
+      return "";
+    }
+
+    function sanitizeTag(tagText) {
+      return String(tagText || "")
+        .trim()
+        .replace(/\s+/g, "-")
+        .replace(/^#+/, "");
+    }
+
+    function normalizeNestedListIndent(markdown) {
+      const withTabs = markdown.replace(/^\t+/gm, (tabs) => "  ".repeat(tabs.length));
+      return withTabs.replace(/^( {4,})([-*+] |\d+\. )/gm, (_, spaces, marker) => {
+        const level = Math.floor(spaces.length / 4);
+        return `${"  ".repeat(level)}${marker}`;
+      });
+    }
+
+    function getFirstTextByTag(item, tagName) {
+      const node = item.getElementsByTagName(tagName)[0];
+      return node ? node.textContent.trim() : "";
+    }
+
+    function getEncodedHtml(item) {
+      const nsNode = item.getElementsByTagNameNS("*", "encoded")[0];
+      if (nsNode && nsNode.textContent.trim()) {
+        return nsNode.textContent;
+      }
+      const fallback = item.getElementsByTagName("description")[0];
+      return fallback ? fallback.textContent : "";
+    }
+
+    function updateProgress(done, total, skipped) {
+      const percent = total > 0 ? (done / total) * 100 : 0;
+      refs.progressBar.style.width = `${percent}%`;
+      refs.countInfo.textContent = `処理: ${done} / ${total}`;
+      refs.skipInfo.textContent = `スキップ: ${skipped} 件`;
+    }
+
+    function buildArticleMarkdown(entry) {
+      const tags = entry.tags.length ? entry.tags.map((t) => `#${t}`).join(" ") : "(なし)";
+      return [
+        `# ${entry.title}`,
+        `📅 作成日: ${entry.date || "(不明)"}`,
+        `🔗 元記事URL: ${entry.url || "(不明)"}`,
+        `🏷️ タグ: ${tags}`,
+        "",
+        "---",
+        normalizeNestedListIndent(entry.bodyMarkdown.trim()),
+        "",
+        "---",
+      ].join("\n");
+    }
+
+    async function convertXmlText(xmlText) {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlText, "application/xml");
+      const parseError = xmlDoc.getElementsByTagName("parsererror")[0];
+      if (parseError) {
+        throw new Error("XMLのパースに失敗しました。ファイル形式を確認してください。");
+      }
+
+      const items = Array.from(xmlDoc.getElementsByTagName("item"));
+      const total = items.length;
+      let done = 0;
+      let skipped = 0;
+      const skippedTitles = [];
+      const outputs = [];
+
+      updateProgress(0, total, 0);
+      refs.status.textContent = "変換中...";
+
+      for (const item of items) {
+        const title = getFirstTextByTag(item, "title");
+        const rawDate = getFirstTextByTag(item, "pubDate");
+        const date = formatDateYYYYMMDD(rawDate);
+        const url = getFirstTextByTag(item, "link");
+        const rawHtml = getEncodedHtml(item);
+
+        if (!title || !rawHtml || !rawHtml.trim()) {
+          skipped += 1;
+          skippedTitles.push(title || "(タイトル未設定)");
+          done += 1;
+          updateProgress(done, total, skipped);
+          await new Promise((r) => setTimeout(r, 0));
+          continue;
+        }
+
+        const tags = Array.from(item.getElementsByTagName("category"))
+          .map((node) => sanitizeTag(node.textContent))
+          .filter(Boolean);
+
+        const bodyMarkdown = turndownService.turndown(rawHtml);
+
+        outputs.push(
+          buildArticleMarkdown({
+            title,
+            date,
+            url,
+            tags,
+            bodyMarkdown,
+          })
+        );
+
+        done += 1;
+        updateProgress(done, total, skipped);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+
+      if (skippedTitles.length > 0) {
+        console.warn("スキップされた記事:", skippedTitles);
+      }
+
+      return {
+        markdown: outputs.join("\n\n"),
+        total,
+        skipped,
+      };
+    }
+
+    async function handleConvert() {
+      const file = refs.xmlFile.files && refs.xmlFile.files[0];
+      if (!file) {
+        refs.status.textContent = "XMLファイルを選択してください。";
+        return;
+      }
+
+      refs.convertBtn.disabled = true;
+      refs.downloadBtn.disabled = true;
+      refs.status.textContent = "ファイル読込中...";
+
+      try {
+        const xmlText = await file.text();
+        const result = await convertXmlText(xmlText);
+        latestMarkdown = result.markdown;
+        const today = new Date();
+        const y = today.getFullYear();
+        const m = String(today.getMonth() + 1).padStart(2, "0");
+        const d = String(today.getDate()).padStart(2, "0");
+        latestFileName = `note_export_${y}-${m}-${d}.md`;
+
+        refs.output.value = latestMarkdown;
+        refs.downloadBtn.disabled = latestMarkdown.length === 0;
+        refs.status.textContent = `完了: ${result.total - result.skipped}件変換 / ${result.skipped}件スキップ`;
+      } catch (err) {
+        refs.status.textContent = err instanceof Error ? err.message : "変換に失敗しました。";
+      } finally {
+        refs.convertBtn.disabled = false;
+      }
+    }
+
+    function downloadMarkdown() {
+      if (!latestMarkdown) return;
+      const blob = new Blob([latestMarkdown], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = latestFileName || "note_export.md";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    refs.convertBtn.addEventListener("click", handleConvert);
+    refs.downloadBtn.addEventListener("click", downloadMarkdown);
+    initTheme();
+  </script>
+</body>
+</html>
