@@ -156,14 +156,22 @@
       background: transparent;
     }
 
-    @media (max-width: 680px) {
-      body {
-        padding: 12px;
-      }
+    /* 分割パネル */
+    .split-controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+    .split-label { color:var(--muted); font-size:0.9rem; }
+    input[type="number"].split-input { width:80px; padding:7px 10px; border-radius:10px; border:1px solid var(--border); background:var(--panel); color:var(--text); font:inherit; }
+    .part-list { display:grid; gap:6px; max-height:280px; overflow-y:auto; margin:10px 0; padding-right:4px; }
+    .part-item { display:flex; align-items:center; gap:10px; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:7px 10px; cursor:pointer; transition:border-color .15s; user-select:none; }
+    .part-item:hover { border-color:var(--accent); }
+    .part-item input[type="checkbox"] { width:16px; height:16px; cursor:pointer; accent-color:var(--accent); }
+    .part-item-label { flex:1; font-size:0.88rem; color:var(--muted); }
+    .part-item-label strong { color:var(--text); font-size:0.95rem; }
+    .part-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .preview-nav { display:flex; gap:8px; align-items:center; margin-bottom:6px; flex-wrap:wrap; }
 
-      .panel {
-        padding: 12px;
-      }
+    @media (max-width: 680px) {
+      body { padding: 12px; }
+      .panel { padding: 12px; }
     }
   </style>
 </head>
@@ -185,6 +193,11 @@
         <button id="convertBtn" type="button">変換開始</button>
         <button id="downloadBtn" type="button" disabled>Markdownを保存</button>
       </div>
+      <div class="row" style="margin-top:10px;">
+        <span class="split-label">分割サイズ（1パートあたりの記事数）：</span>
+        <input id="splitSize" type="number" class="split-input" value="10" min="1" max="9999" />
+        <span id="splitPreviewCount" class="split-label"></span>
+      </div>
 
       <div class="progress-track" aria-label="進捗">
         <div id="progressBar" class="progress-bar"></div>
@@ -198,8 +211,32 @@
       <div id="status" class="status"></div>
     </section>
 
+    <!-- 分割DLパネル -->
+    <section class="panel" id="splitPanel" style="display:none">
+      <div style="font-weight:600; margin-bottom:10px;">分割ダウンロード</div>
+      <div class="split-controls">
+        <span id="splitCount" class="split-label"></span>
+        <button id="splitBtn" type="button">再分割</button>
+      </div>
+      <div id="partList" class="part-list"></div>
+      <div class="part-actions">
+        <button id="checkAllBtn" class="secondary" type="button" disabled>すべて選択</button>
+        <button id="uncheckAllBtn" class="secondary" type="button" disabled>すべて解除</button>
+        <button id="dlSelectedBtn" type="button" disabled>選択をまとめてDL</button>
+      </div>
+      <!-- プレビュー -->
+      <div class="preview-box">
+        <div class="preview-nav">
+          <span class="split-label">プレビュー：パート</span>
+          <input id="previewNum" type="number" class="split-input" value="1" min="1" style="width:70px" />
+          <button id="previewBtn" class="secondary" type="button">表示</button>
+        </div>
+        <textarea id="splitPreview" spellcheck="false" style="width:100%;min-height:200px;resize:vertical;padding:10px;color:var(--text);background:transparent;border-radius:10px;border:1px solid var(--border);" placeholder="パート番号を指定して表示"></textarea>
+      </div>
+    </section>
+
     <section class="panel">
-      <div class="sub" style="margin-top: 0; margin-bottom: 8px;">出力プレビュー（巨大文字列）</div>
+      <div class="sub" style="margin-top: 0; margin-bottom: 8px;">出力プレビュー（全体）</div>
       <textarea id="output" spellcheck="false" placeholder="変換結果がここに表示されます"></textarea>
     </section>
   </div>
@@ -229,12 +266,9 @@
       bulletListMarker: "-",
     });
 
-    // Lightweight inline tags are flattened to plain text content.
     turndownService.addRule("lightweight-inline-tags", {
       filter: ["span", "em"],
-      replacement(content) {
-        return content;
-      },
+      replacement(content) { return content; },
     });
 
     function applyTheme(theme) {
@@ -260,27 +294,22 @@
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
-        return `${y}-${m}-${day}`;
+        return y + "-" + m + "-" + day;
       }
       const found = String(raw).match(/(\d{4})[^\d]?(\d{1,2})[^\d]?(\d{1,2})/);
-      if (found) {
-        return `${found[1]}-${String(found[2]).padStart(2, "0")}-${String(found[3]).padStart(2, "0")}`;
-      }
+      if (found) return found[1] + "-" + String(found[2]).padStart(2,"0") + "-" + String(found[3]).padStart(2,"0");
       return "";
     }
 
     function sanitizeTag(tagText) {
-      return String(tagText || "")
-        .trim()
-        .replace(/\s+/g, "-")
-        .replace(/^#+/, "");
+      return String(tagText || "").trim().replace(/\s+/g, "-").replace(/^#+/, "");
     }
 
     function normalizeNestedListIndent(markdown) {
       const withTabs = markdown.replace(/^\t+/gm, (tabs) => "  ".repeat(tabs.length));
       return withTabs.replace(/^( {4,})([-*+] |\d+\. )/gm, (_, spaces, marker) => {
         const level = Math.floor(spaces.length / 4);
-        return `${"  ".repeat(level)}${marker}`;
+        return "  ".repeat(level) + marker;
       });
     }
 
@@ -291,27 +320,25 @@
 
     function getEncodedHtml(item) {
       const nsNode = item.getElementsByTagNameNS("*", "encoded")[0];
-      if (nsNode && nsNode.textContent.trim()) {
-        return nsNode.textContent;
-      }
+      if (nsNode && nsNode.textContent.trim()) return nsNode.textContent;
       const fallback = item.getElementsByTagName("description")[0];
       return fallback ? fallback.textContent : "";
     }
 
     function updateProgress(done, total, skipped) {
       const percent = total > 0 ? (done / total) * 100 : 0;
-      refs.progressBar.style.width = `${percent}%`;
-      refs.countInfo.textContent = `処理: ${done} / ${total}`;
-      refs.skipInfo.textContent = `スキップ: ${skipped} 件`;
+      refs.progressBar.style.width = percent + "%";
+      refs.countInfo.textContent = "処理: " + done + " / " + total;
+      refs.skipInfo.textContent = "スキップ: " + skipped + " 件";
     }
 
     function buildArticleMarkdown(entry) {
-      const tags = entry.tags.length ? entry.tags.map((t) => `#${t}`).join(" ") : "(なし)";
+      const tags = entry.tags.length ? entry.tags.map(t => "#" + t).join(" ") : "(なし)";
       return [
-        `# ${entry.title}`,
-        `📅 作成日: ${entry.date || "(不明)"}`,
-        `🔗 元記事URL: ${entry.url || "(不明)"}`,
-        `🏷️ タグ: ${tags}`,
+        "# " + entry.title,
+        "📅 作成日: " + (entry.date || "(不明)"),
+        "🔗 元記事URL: " + (entry.url || "(不明)"),
+        "🏷️ タグ: " + tags,
         "",
         "---",
         normalizeNestedListIndent(entry.bodyMarkdown.trim()),
@@ -324,16 +351,12 @@
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(xmlText, "application/xml");
       const parseError = xmlDoc.getElementsByTagName("parsererror")[0];
-      if (parseError) {
-        throw new Error("XMLのパースに失敗しました。ファイル形式を確認してください。");
-      }
+      if (parseError) throw new Error("XMLのパースに失敗しました。ファイル形式を確認してください。");
 
       const items = Array.from(xmlDoc.getElementsByTagName("item"));
       const total = items.length;
-      let done = 0;
-      let skipped = 0;
-      const skippedTitles = [];
-      const outputs = [];
+      let done = 0, skipped = 0;
+      const skippedTitles = [], outputs = [];
 
       updateProgress(0, total, 0);
       refs.status.textContent = "変換中...";
@@ -346,52 +369,31 @@
         const rawHtml = getEncodedHtml(item);
 
         if (!title || !rawHtml || !rawHtml.trim()) {
-          skipped += 1;
+          skipped++;
           skippedTitles.push(title || "(タイトル未設定)");
-          done += 1;
+          done++;
           updateProgress(done, total, skipped);
-          await new Promise((r) => setTimeout(r, 0));
+          await new Promise(r => setTimeout(r, 0));
           continue;
         }
 
         const tags = Array.from(item.getElementsByTagName("category"))
-          .map((node) => sanitizeTag(node.textContent))
-          .filter(Boolean);
-
+          .map(node => sanitizeTag(node.textContent)).filter(Boolean);
         const bodyMarkdown = turndownService.turndown(rawHtml);
+        outputs.push(buildArticleMarkdown({ title, date, url, tags, bodyMarkdown }));
 
-        outputs.push(
-          buildArticleMarkdown({
-            title,
-            date,
-            url,
-            tags,
-            bodyMarkdown,
-          })
-        );
-
-        done += 1;
+        done++;
         updateProgress(done, total, skipped);
-        await new Promise((r) => setTimeout(r, 0));
+        await new Promise(r => setTimeout(r, 0));
       }
 
-      if (skippedTitles.length > 0) {
-        console.warn("スキップされた記事:", skippedTitles);
-      }
-
-      return {
-        markdown: outputs.join("\n\n"),
-        total,
-        skipped,
-      };
+      if (skippedTitles.length > 0) console.warn("スキップされた記事:", skippedTitles);
+      return { markdown: outputs.join("\n\n"), total, skipped };
     }
 
     async function handleConvert() {
       const file = refs.xmlFile.files && refs.xmlFile.files[0];
-      if (!file) {
-        refs.status.textContent = "XMLファイルを選択してください。";
-        return;
-      }
+      if (!file) { refs.status.textContent = "XMLファイルを選択してください。"; return; }
 
       refs.convertBtn.disabled = true;
       refs.downloadBtn.disabled = true;
@@ -405,11 +407,21 @@
         const y = today.getFullYear();
         const m = String(today.getMonth() + 1).padStart(2, "0");
         const d = String(today.getDate()).padStart(2, "0");
-        latestFileName = `note_export_${y}-${m}-${d}.md`;
+        latestFileName = "note_export_" + y + "-" + m + "-" + d + ".md";
 
         refs.output.value = latestMarkdown;
         refs.downloadBtn.disabled = latestMarkdown.length === 0;
-        refs.status.textContent = `完了: ${result.total - result.skipped}件変換 / ${result.skipped}件スキップ`;
+        refs.status.textContent = "完了: " + (result.total - result.skipped) + "件変換 / " + result.skipped + "件スキップ";
+
+        // 分割パネル表示
+        document.getElementById("splitPanel").style.display = "";
+        buildParts(document.getElementById("splitSize").value);
+        renderPartList();
+        // 変換前カウント表示も更新
+        const articleCount = splitArticles(latestMarkdown).length;
+        const size = Math.max(1, parseInt(document.getElementById("splitSize").value) || 10);
+        const pcount = document.getElementById("splitPreviewCount");
+        if (pcount) pcount.textContent = "→ " + articleCount + "記事 / " + Math.ceil(articleCount/size) + "パート";
       } catch (err) {
         refs.status.textContent = err instanceof Error ? err.message : "変換に失敗しました。";
       } finally {
@@ -417,22 +429,128 @@
       }
     }
 
-    function downloadMarkdown() {
-      if (!latestMarkdown) return;
-      const blob = new Blob([latestMarkdown], { type: "text/markdown;charset=utf-8" });
+    function downloadBlob(content, filename) {
+      const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      a.download = latestFileName || "note_export.md";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     }
+
+    function downloadMarkdown() {
+      if (!latestMarkdown) return;
+      downloadBlob(latestMarkdown, latestFileName || "note_export.md");
+    }
+
+    // ── 分割機能 ──────────────────────────────────
+    let parts = [];
+
+    function splitArticles(md) {
+      const blocks = md.split(/\n(?=# )/);
+      return blocks.map(s => s.replace(/^\n/, "")).filter(s => s.trim());
+    }
+
+    function buildParts(sizeStr) {
+      const size = Math.max(1, parseInt(sizeStr) || 10);
+      const articles = splitArticles(latestMarkdown);
+      parts = [];
+      for (let i = 0; i < articles.length; i += size) {
+        const chunk = articles.slice(i, i + size);
+        const num = Math.floor(i / size) + 1;
+        parts.push({
+          title: "part" + String(num).padStart(3, "0"),
+          content: chunk.join("\n\n")
+        });
+      }
+      return parts;
+    }
+
+    function renderPartList() {
+      const list = document.getElementById("partList");
+      list.innerHTML = "";
+      parts.forEach((p, i) => {
+        const articleCount = (p.content.match(/^# /gm) || []).length;
+        const item = document.createElement("label");
+        item.className = "part-item";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "part-cb";
+        cb.dataset.idx = i;
+        cb.checked = true;
+        const span = document.createElement("span");
+        span.className = "part-item-label";
+        span.innerHTML = "<strong>" + p.title + ".md</strong> &nbsp;（" + articleCount + "記事）";
+        item.appendChild(cb);
+        item.appendChild(span);
+        list.appendChild(item);
+      });
+      const hasParts = parts.length > 0;
+      document.getElementById("checkAllBtn").disabled = !hasParts;
+      document.getElementById("uncheckAllBtn").disabled = !hasParts;
+      document.getElementById("dlSelectedBtn").disabled = !hasParts;
+      document.getElementById("splitCount").textContent = hasParts ? ("→ " + parts.length + " パートに分割") : "";
+      document.getElementById("previewNum").max = parts.length;
+    }
+
+    function getCheckedIndices() {
+      return Array.from(document.querySelectorAll(".part-cb:checked")).map(el => parseInt(el.dataset.idx));
+    }
+
+
+
+    // splitSize変更時にプレビューカウント更新
+    document.getElementById("splitSize").addEventListener("input", () => {
+      const el = document.getElementById("splitPreviewCount");
+      if (!el) return;
+      const size = Math.max(1, parseInt(document.getElementById("splitSize").value) || 10);
+      if (latestMarkdown) {
+        const articleCount = splitArticles(latestMarkdown).length;
+        const partCount = Math.ceil(articleCount / size);
+        el.textContent = "→ " + articleCount + "記事 / " + partCount + "パート";
+      } else {
+        el.textContent = "";
+      }
+    });
+
+    document.getElementById("splitBtn").addEventListener("click", () => {
+      if (!latestMarkdown) return;
+      buildParts(document.getElementById("splitSize").value);
+      renderPartList();
+    });
+
+    document.getElementById("checkAllBtn").addEventListener("click", () => {
+      document.querySelectorAll(".part-cb").forEach(cb => { cb.checked = true; });
+    });
+    document.getElementById("uncheckAllBtn").addEventListener("click", () => {
+      document.querySelectorAll(".part-cb").forEach(cb => { cb.checked = false; });
+    });
+
+    document.getElementById("dlSelectedBtn").addEventListener("click", async () => {
+      const idxs = getCheckedIndices();
+      if (!idxs.length) return;
+      const btn = document.getElementById("dlSelectedBtn");
+      btn.disabled = true;
+      for (let n = 0; n < idxs.length; n++) {
+        const i = idxs[n];
+        downloadBlob(parts[i].content, parts[i].title + ".md");
+        btn.textContent = "DL中... " + (n+1) + "/" + idxs.length;
+        await new Promise(r => setTimeout(r, 300));
+      }
+      btn.textContent = "選択をまとめてDL";
+      btn.disabled = false;
+    });
+
+    document.getElementById("previewBtn").addEventListener("click", () => {
+      const n = parseInt(document.getElementById("previewNum").value);
+      if (!parts.length || n < 1 || n > parts.length) return;
+      document.getElementById("splitPreview").value = parts[n - 1].content;
+    });
 
     refs.convertBtn.addEventListener("click", handleConvert);
     refs.downloadBtn.addEventListener("click", downloadMarkdown);
     initTheme();
   </script>
+
 </body>
 </html>
